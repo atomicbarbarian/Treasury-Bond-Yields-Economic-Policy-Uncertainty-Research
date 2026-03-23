@@ -1,0 +1,106 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import re
+import warnings
+
+warnings.filterwarnings('ignore')
+
+# Load Data
+df = pd.read_csv('combined_epu_yields.csv')
+epu_col = 'News_Based_Policy_Uncert_Index'
+
+# Define the exact Absolute "Crisis Threshold" bins
+bin_edges = [0, 120, 200, 1000]
+bin_labels = ['Normal / Stable (EPU < 120)', 'Elevated Risk (EPU 120 - 200)', 'Severe Crisis / Panic (EPU > 200)']
+
+df['Crisis_Bin'] = pd.cut(df[epu_col], bins=bin_edges, labels=bin_labels, right=True)
+
+summary = df.groupby('Crisis_Bin', observed=False)['News_Based_Policy_Uncert_Index'].agg(
+    Count='count',
+    Min_EPU='min',
+    Max_EPU='max',
+    Avg_EPU='mean'
+)
+
+print(summary)
+
+# Identify and Sort Yield Columns by Maturity
+yield_cols = [col for col in df.columns if 'Market yield' in col]
+
+def extract_maturity(col_name):
+    match = re.search(r'at\s+(\d+)-(month|year)', col_name)
+    if match:
+        val = match.group(1)
+        unit = match.group(2)
+        unit_str = ' Mo' if unit == 'month' else ' Yr'
+        return val + unit_str
+    return col_name
+
+def extract_years(col_name):
+    match = re.search(r'at\s+(\d+)-(month|year)', col_name)
+    if match:
+        val = int(match.group(1))
+        unit = match.group(2)
+        if unit == 'month':
+            return val / 12.0
+        return float(val)
+    return 0.0
+
+# Sort the columns numerically 
+maturity_mapping = {col: extract_years(col) for col in yield_cols}
+yield_cols = sorted(yield_cols, key=lambda c: maturity_mapping[c])
+maturities = [extract_maturity(c) for c in yield_cols]
+
+# Calculate Average Yields per Absolute Bin
+avg_yields = df.groupby('Crisis_Bin', observed=False)[yield_cols].mean()
+
+# Plot the revised yield curves
+plt.figure(figsize=(11, 7))
+
+# Distinct colors for the narrative: Green = Normal, Orange = Elevated, Red = Severe Panic
+colors = ['mediumseagreen', 'orange', 'firebrick']
+markers = ['o', 's', '^']
+
+for i, (index, row) in enumerate(avg_yields.iterrows()):
+    plt.plot(maturities, row.values, marker=markers[i], color=colors[i], linewidth=2.5, markersize=8, label=index)
+
+#plt.title('Average US Treasury Securities Yield Curves by Policy Uncertainty Regimes', fontsize=15, fontweight='bold')
+plt.xlabel('Maturity', fontsize=12)
+plt.ylabel('Average Yield (%)', fontsize=12)
+plt.legend(title='EPU Regime', fontsize=11, loc='upper left')
+plt.grid(True, linestyle='--', alpha=0.5)
+plt.tight_layout()
+
+# Save Plot
+plt.savefig('yield_curves_crisis_thresholds.png', dpi=300)
+
+
+
+df = pd.read_csv('combined_epu_yields.csv')
+epu_col = 'News_Based_Policy_Uncert_Index'
+col_10yr = [c for c in df.columns if '10-year' in c][0]
+col_3mo = [c for c in df.columns if '3-month' in c][0]
+
+df['Date'] = pd.to_datetime(df[['Year', 'Month']].assign(DAY=1))
+df = df.sort_values('Date').set_index('Date')
+
+bin_edges = [0, 120, 200, 1000]
+bin_labels = ['Normal (EPU < 120)', 'Elevated (EPU 120 - 200)', 'Severe Crisis (EPU > 200)']
+df_bins = df.copy()
+df_bins['Crisis_Bin'] = pd.cut(df_bins[epu_col], bins=bin_edges, labels=bin_labels)
+
+print("\nTABLE 1 DATA EXTRACT:")
+avg_yields = df_bins.groupby('Crisis_Bin', observed=False)[[col_3mo, col_10yr]].mean()
+avg_yields['Spread'] = avg_yields[col_10yr] - avg_yields[col_3mo]
+counts = df_bins['Crisis_Bin'].value_counts()
+total = len(df_bins)
+
+for bin_name in bin_labels:
+    pct = (counts[bin_name] / total) * 100
+    y_3m = avg_yields.loc[bin_name, col_3mo]
+    y_10y = avg_yields.loc[bin_name, col_10yr]
+    spread = avg_yields.loc[bin_name, 'Spread']
+    print(f"| {bin_name} | {pct:.1f}% | {y_3m:.2f}% | {y_10y:.2f}% | +{spread:.2f}% |")
+
+    total_months = len(df)

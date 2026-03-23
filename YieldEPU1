@@ -1,0 +1,90 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import re
+
+# Load the combined data
+df = pd.read_csv('combined_epu_yields.csv')
+
+# Create 3 "bins" based on the Policy Uncertainty Index
+df['EPU_Bin'], bins = pd.qcut(df['News_Based_Policy_Uncert_Index'], q=3, 
+                              labels=['Low Uncertainty', 'Medium Uncertainty', 'High Uncertainty'], 
+                              retbins=True)
+
+summary = df.groupby('EPU_Bin', observed=False)['News_Based_Policy_Uncert_Index'].agg(
+    Count='count',
+    Min_EPU='min',
+    Max_EPU='max',
+    Avg_EPU='mean'
+)
+
+print(summary)
+print("\nExact boundaries from the cut algorithm:")
+print(f"Bin 1 Edge: {bins[0]:.2f}")
+print(f"Bin 2 Edge: {bins[1]:.2f}")
+print(f"Bin 3 Edge: {bins[2]:.2f}")
+print(f"Bin 4 Edge: {bins[3]:.2f}")
+
+# Identify the yield columns
+yield_cols = [col for col in df.columns if 'Market yield' in col]
+
+# Helper function to extract short maturity labels for the x-axis
+def extract_maturity(col_name):
+    match = re.search(r'at ([\d-]+(?:month|year))', col_name)
+    if match:
+        val = match.group(1)
+        val = val.replace('-month', ' Mo').replace('-year', ' Yr')
+        return val
+    return col_name
+
+maturities = [extract_maturity(c) for c in yield_cols]
+
+# Calculate the average yield across all maturities for each EPU bin
+avg_yields = df.groupby('EPU_Bin')[yield_cols].mean()
+
+# Build the line graphs (yield curves)
+plt.figure(figsize=(10, 6))
+
+for index, row in avg_yields.iterrows():
+    # Plot a line for each bin group using the corresponding row values
+    plt.plot(maturities, row.values, marker='o', linewidth=2, label=index)
+
+plt.title('Average US Treasury Securities Yield Curves by Policy Uncertainty Level', fontsize=14)
+plt.xlabel('Maturity', fontsize=12)
+plt.ylabel('Average Yield (%)', fontsize=12)
+plt.legend(title='EPU Level', fontsize=10)
+plt.grid(True, linestyle='--', alpha=0.6)
+plt.tight_layout()
+
+# Save the plot
+plt.savefig('yield_curves_by_epu.png')
+
+plt.show()
+
+df = pd.read_csv('combined_epu_yields.csv')
+epu_col = 'News_Based_Policy_Uncert_Index'
+col_10yr = [c for c in df.columns if '10-year' in c][0]
+col_3mo = [c for c in df.columns if '3-month' in c][0]
+
+df['Date'] = pd.to_datetime(df[['Year', 'Month']].assign(DAY=1))
+df = df.sort_values('Date').set_index('Date')
+
+bin_edges = [0, 120, 200, 1000]
+bin_labels = ['Normal (EPU < 120)', 'Elevated (EPU 120 - 200)', 'Severe Crisis (EPU > 200)']
+df_bins = df.copy()
+df_bins['Crisis_Bin'] = pd.cut(df_bins[epu_col], bins=bin_edges, labels=bin_labels)
+
+print("\nTABLE 1 DATA EXTRACT:")
+avg_yields = df_bins.groupby('Crisis_Bin', observed=False)[[col_3mo, col_10yr]].mean()
+avg_yields['Spread'] = avg_yields[col_10yr] - avg_yields[col_3mo]
+counts = df_bins['Crisis_Bin'].value_counts()
+total = len(df_bins)
+
+for bin_name in bin_labels:
+    pct = (counts[bin_name] / total) * 100
+    y_3m = avg_yields.loc[bin_name, col_3mo]
+    y_10y = avg_yields.loc[bin_name, col_10yr]
+    spread = avg_yields.loc[bin_name, 'Spread']
+    print(f"| {bin_name} | {pct:.1f}% | {y_3m:.2f}% | {y_10y:.2f}% | +{spread:.2f}% |")
+
+    total_months = len(df) 
+
